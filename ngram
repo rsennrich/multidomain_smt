@@ -1,0 +1,131 @@
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+# Copyright: University of Zurich
+# Author: Rico Sennrich
+
+# use the query tool from KenLM, but return results in the SRILM format.
+# useful when having to avoid SRILM for licensing reasons
+
+from __future__ import unicode_literals, print_function
+
+from config import QUERY_CMD
+
+import sys
+import argparse
+import re
+from subprocess import Popen, PIPE
+from collections import defaultdict
+
+
+query_regex = re.compile('(\S+?)=(\d+) (\d+) (\S+)\t')
+
+def parse_args():
+
+    parser = argparse.ArgumentParser(description='Query KenLM, but return SRILM formatted perplexities.')
+    parser.add_argument('-lm', metavar='PATH', type=str,
+                    help='language model file', required=True)
+    parser.add_argument('-ppl', metavar='PATH', nargs='?', type=argparse.FileType('r'),
+                    help='text for which perplexity is measured (default: stdin)', default=sys.stdin)
+    parser.add_argument('-debug', metavar='N', nargs='?', type=int,
+                    help='verbosity level', default=0, const=1, choices=range(3))
+    parser.add_argument('-query', metavar='PATH', nargs='?', type=str,
+                    help='KenLM query executable (can be hardcoded in script for command line compatibility with SRILM)', default=QUERY_CMD)
+    parser.add_argument('-unk', action='store_true',
+                    help='estimate unknown words')
+
+    return parser.parse_known_args()
+
+
+def perplexity(total, length):
+    try:
+        return b'{0:.6g}'.format(10**-(total/length))
+    except ZeroDivisionError:
+        return b'undefined'
+
+
+def convert_line(line, debug, unk):
+
+    words = query_regex.findall(line)
+    summary = line.rsplit(b'\t',1)[-1].split()
+
+    input_line = b' '.join(word[0] for word in words[:-1])
+    logprob = float(summary[1])
+    if unk:
+        OOV = 0
+    else:
+        logprob -= sum(float(word[-1]) for word in words if word[1]==b'0') # log probability of OOV words (ignored in SRILM)
+        OOV = int(summary[-1])
+    length = len(words)-1 # number of words (except </s>)
+    end_of_sentence_prob = float(words[-1][-1]) # probability of </s>; ignored for ppl1
+
+    if debug:
+        print(input_line)
+
+        if debug == 2:
+            before = b'<s> '
+            for word in words:
+                token, token_id, ngram, word_logprob = word
+                ngram = ngram+b'gram'
+                if token_id == b'0':
+                    token = b'<unk>'
+                    if not unk:
+                        word_logprob = float('-inf')
+                        ngram = b'OOV'
+                print(b'\tp( {0} | {1}) \t= [{2}] {3:.6g} [ {4} ]'.format(token, before, ngram, 10**float(word_logprob), word_logprob))
+                before = token + b' ...'
+
+        ppl0 = perplexity(logprob, length-OOV+1)
+        ppl1 = perplexity(logprob, length-OOV)
+
+        print(b'{0} sentences, {1} words, {2} OOVs'.format(1, length, OOV))
+        print(b'{0} zeroprobs, logprob= {1:.6g} ppl= {2} ppl1= {3}'.format(0, logprob, ppl0, ppl1))
+        print()
+
+    return input_line, OOV, logprob, end_of_sentence_prob, length
+
+
+def query(lm, textfile, debug, unk):
+
+    cmd = [QUERY_CMD, lm]
+
+    kenlm_query = Popen(cmd, stdin=textfile, stdout=PIPE)
+
+    statistics = defaultdict(float)
+
+    total_OOV = 0
+    total_logprob = 0
+    total_end_of_sentence_prob = 0
+    total_length = 0
+    total_sentences = 0
+
+    for line in kenlm_query.stdout:
+        text, OOV, logprob, end_of_sentence_prob, length = convert_line(line, debug, unk)
+        total_OOV += OOV
+        total_logprob += logprob
+        total_end_of_sentence_prob += end_of_sentence_prob
+        total_length += length
+        total_sentences += 1
+
+    if textfile == sys.stdin:
+        name = '-'
+    else:
+        name = textfile.name
+
+    ppl0 = perplexity(total_logprob, total_length-total_OOV+total_sentences)
+    ppl1 = perplexity(total_logprob, total_length-total_OOV)
+
+    print(b'file {0}: {1} sentences, {2} words, {3} OOVs'.format(name, total_sentences, total_length, total_OOV))
+    print(b'{0} zeroprobs, logprob= {1:.6g} ppl= {2} ppl1= {3}'.format(0, total_logprob, ppl0, ppl1))
+
+
+if __name__ == '__main__':
+
+    args, unknown = parse_args()
+    if unknown:
+        sys.stderr.write('Warning: the following command line arguments are unsupported/ignored: {0}\n'.format(' '.join(unknown)))
+
+    if args.query == 'path/to/bin/query':
+        sys.stderr.write('ERROR: you need to set the path to KenLM\'s query tool either through the command line argument -query, or in this script itself\n')
+        sys.exit(1)
+
+    query(args.lm, args.ppl, args.debug, args.unk)
