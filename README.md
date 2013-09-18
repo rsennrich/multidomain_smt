@@ -1,7 +1,7 @@
 multidomain_smt
 ================
 
-A project of the Computational Linguistics Group at the University of Zurich (http://www.cl.uzh.ch).
+This project was developed at the Laboratoire d'Informatique de l'Université du Maine (http://www-lium.univ-lemans.fr), and the Institute of Computational Linguistics at the University of Zurich (http://www.cl.uzh.ch).
 
 Project Homepage: http://github.com/rsennrich/multidomain_smt
 
