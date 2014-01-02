@@ -34,7 +34,8 @@ def translate_single_line(args):
     server = xmlrpclib.ServerProxy(server_url)
 
     params = {'text':line}
-    params['weight-t-multimodel'] = weights
+    params['lambda'] = weights
+    params['model_name'] = 'PhraseDictionaryMultiModelCounts0'
     try:
         translation = server.translate(params)['text']
     # assume that socket errors mean that the model hasn't finished loading; if something else is wrong with server (e.g. port busy), program is stuck
